@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--  This file conforms to the DTD xdc/bld/build.dtd -->
+<package name="configPkg" version="" producerId="undefined">
+    <units>
+    </units>
+    <sources>
+        <srcFile name="package/cfg/error_pem3.c"/>
+    </sources>
+    <configscripts>
+        <srcFile name="/home/jackie/ti/workspaces/workspace_1/error_CC2640R2_LAUNCHXL_tirtos_ccs/error.cfg"/>
+    </configscripts>
+    <makefiles>
+        <srcFile name="package.mak" src="package.bld"/>
+        <srcFile name="package/package.xdc.dep" src="package.xdc"/>
+        <srcFile name="package/cfg/error_pem3.mak" src="package.bld"/>
+        <srcFile name="package/cfg/error_pem3.oem3.dep" src="package/cfg/error_pem3.c"/>
+        <srcFile name="package/cfg/error_pem3.dep" src="package/cfg/error_pem3.cfg"/>
+        <srcFile name="package/cfg/error.xem3.mak" src="package.bld"/>
+        <srcFile name="package/rel/configPkg.tar.dep" src="package/rel/configPkg.xdc.inc"/>
+    </makefiles>
+    <targets>
+        <target name="ti.targets.arm.elf.M3"
+            version="ti.targets.arm.elf.M3{1,0,18.12,3"
+            rawVersion="18.12.3"
+            platform="ti.platforms.simCM3"
+            isa="v7M"
+            suffix="em3"
+            rootDir="/home/jackie/ti/ccs920/ccs/tools/compiler/ti-cgt-arm_18.12.3.LTS"
+            os="undefined"
+            rts="ti.targets.arm.rtsarm">
+            <model endian="little"
+                codeModel="thumb2"
+                dataModel="undefined"/>
+        </target>
+    </targets>
+    <libraries>
+    </libraries>
+    <configurations>
+    <configuration name="error"
+        pname="error.pem3"
+        target="ti.targets.arm.elf.M3"
+        platform="ti.platforms.simplelink:CC2640R2F"
+        profile="release"
+        isPartial="false"
+        xCfgScript="package/cfg/error_pem3.cfg"
+        xCfgPrefix="package/cfg/error_pem3"
+        cfgScript="/home/jackie/ti/workspaces/workspace_1/error_CC2640R2_LAUNCHXL_tirtos_ccs/error.cfg"
+        cfgArgs="null"
+        />
+    </configurations>
+    <executables>
+    <executable name="error"
+        pname="error.xem3"
+        target="ti.targets.arm.elf.M3"
+        platform="ti.platforms.simplelink:CC2640R2F"
+        profile="release"
+        xCfgScript="package/cfg/error_pem3.cfg"
+        xCfgPrefix="package/cfg/error_pem3"
+        cfgScript="/home/jackie/ti/workspaces/workspace_1/error_CC2640R2_LAUNCHXL_tirtos_ccs/error.cfg"
+        cfgArgs="null"
+        />
+    </executables>
+    <tests>
+    <test exeName="error.xem3"
+        args=""
+        groupName="error.xem3"
+        refOutput="undefined"
+        refExitCode="0"
+        execArgs=""
+        />
+    </tests>
+    <releases relDir="package/rel/">
+    <release name="configPkg"
+        pname="configPkg.tar"
+        label="default"
+    >
+        <file name="package/package.bld.xml"/>
+        <file name="package/build.cfg"/>
+        <file name="package/package.xdc.inc"/>
+    </release>
+    </releases>
+    <repositories>
+    </repositories>
+</package>
