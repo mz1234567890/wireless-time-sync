@@ -11,13 +11,15 @@
 
 int scanTime = 5;  // In seconds
 BLEScan* pBLEScan;
+bool device_found = false;
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     Serial.printf("Advertised Device: %s \n",
                   advertisedDevice.toString().c_str());
-    if (advertisedDevice.getAddress().toString() == "f0:f8:f2:da:40:f9") {
+    if (advertisedDevice.getName() == "SimpleBLEBroadcaster") {
       Serial.print("This device!\n");
+      device_found = true;
     }
   }
 };
@@ -33,15 +35,16 @@ void setup() {
       true);  // active scan uses more power, but get results faster
   pBLEScan->setInterval(100);
   pBLEScan->setWindow(99);  // less or equal setInterval value
+  while (!device_found) {
+    // put your main code here, to run repeatedly:
+    BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
+    Serial.print("Devices found: ");
+    Serial.println(foundDevices.getCount());
+    Serial.println("Scan done!");
+    pBLEScan->clearResults();  // delete results fromBLEScan buffer to release
+                               // memory
+    delay(2000);
+  }
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
-  BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-  Serial.print("Devices found: ");
-  Serial.println(foundDevices.getCount());
-  Serial.println("Scan done!");
-  pBLEScan
-      ->clearResults();  // delete results fromBLEScan buffer to release memory
-  delay(2000);
-}
+void loop() { Serial.println("In loop"); }
