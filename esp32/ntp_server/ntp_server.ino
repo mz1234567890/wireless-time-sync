@@ -26,7 +26,7 @@
       (uint64_t) * (uint32_t *)0x3FF5F004
 #define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
 #define PRINT_UINT64(data)                                \
-  Serial.print((uint32_t)(*(uint64_t *)data << 32), HEX); \
+  Serial.print((uint32_t)(*(uint64_t *)data >> 32), HEX); \
   Serial.print(", ");                                     \
   Serial.println(*(uint32_t *)data, HEX)
 
@@ -42,11 +42,11 @@ uint64_t t1;
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     TIMER_UPDATE();
-    Serial.print(HIGH32_TIMER(), HEX);
-    Serial.print(", ");
-    Serial.println(LOW32_TIMER(), HEX);
     t1 = READ_TIMER();
+    Serial.print("t1: ");
+    PRINT_UINT64(&t1);
     uint8_t *data = pCharacteristic->getData();
+    Serial.print("t0: ");
     PRINT_UINT64(data);
   }
 };
@@ -186,6 +186,7 @@ void loop() {
   if (t1) {
     TIMER_UPDATE();
     uint64_t t2 = READ_TIMER();
+    PRINT_UINT64(&t2);
     pRemoteCharacteristic->writeValue((uint8_t *)&t1, 8);
     t1 = 0;
     read_char->setValue((uint8_t *)&t2, 8);

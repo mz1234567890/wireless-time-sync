@@ -26,7 +26,7 @@
       (uint64_t) * (uint32_t *)0x3FF5F004
 #define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
 #define PRINT_UINT64(data)                                \
-  Serial.print((uint32_t)(*(uint64_t *)data << 32), HEX); \
+  Serial.print((uint32_t)(*(uint64_t *)data >> 32), HEX); \
   Serial.print(", ");                                     \
   Serial.println(*(uint32_t *)data, HEX)
 
@@ -46,8 +46,6 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     t3 = READ_TIMER();
     uint8_t *data = pCharacteristic->getData();
     t1 = *(uint64_t *)data;
-    Serial.print("t3: ");
-    PRINT_UINT64(&t3);
   }
 };
 
@@ -166,8 +164,6 @@ void loop() {
   // make t0
   TIMER_UPDATE();
   uint64_t t0 = READ_TIMER();
-  Serial.print("t0: ");
-  PRINT_UINT64(&t0);
   // write t0, set t1
   t1 = 0;
   server_write_char->writeValue((uint8_t *)&t0, 8);
@@ -175,13 +171,27 @@ void loop() {
   while (t1 == 0) {
     delay(10);
   }
-  // print t1
-  Serial.print("t1: ");
-  PRINT_UINT64(&t1);
+
   // get t2 from read_char
-  // uint8_t *t2 = server_read_char->readRawData();
+  std::string temp = server_read_char->readValue();
+  uint64_t t2 = *(uint64_t *)temp.c_str();
+  uint64_t d = ((t1 - t0) + (t3 - t2)) / 2;
+  uint64_t o = ((t1 - t0) - (t3 - t2)) / 2;
+  TIMER_UPDATE();
+  *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
+  *((uint32_t *)0x3FF5F020) = 1;
+  // Serial.print("t0: ");
+  // PRINT_UINT64(&t0);
+  // Serial.print("t1: ");
+  // PRINT_UINT64(&t1);
   // Serial.print("t2: ");
-  // PRINT_UINT64(t2);
-  t1 = 0;
-  delay(10000);
+  // PRINT_UINT64(&t2);
+  // Serial.print("t3: ");
+  // PRINT_UINT64(&t3);
+
+  // Serial.print("delay: ");
+  // PRINT_UINT64(&d);
+  // Serial.print("offset: ");
+  Serial.println((int32_t)o);
+  delay(1 * 1000);
 }
