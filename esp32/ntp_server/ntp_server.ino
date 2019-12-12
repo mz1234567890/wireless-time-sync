@@ -15,6 +15,7 @@
 
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CHARACTERISTIC_UUID_2 "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 // General purpose timer info
 #define TIMER_CONFIG(value) *(uint32_t *)0x3FF5F000 = value
@@ -24,13 +25,19 @@
   (((uint64_t) * (uint32_t *)0x3FF5F008) << 32) + \
       (uint64_t) * (uint32_t *)0x3FF5F004
 #define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
+#define PRINT_UINT64(data)                                \
+  Serial.print((uint32_t)(*(uint64_t *)data << 32), HEX); \
+  Serial.print(", ");                                     \
+  Serial.println(*(uint32_t *)data, HEX)
 
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
 static BLERemoteCharacteristic *pRemoteCharacteristic;
+BLECharacteristic *read_char;
 static BLEAdvertisedDevice *myDevice;
 BLEScan *pBLEScan;
+uint64_t t1;
 
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
@@ -38,24 +45,9 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     Serial.print(HIGH32_TIMER(), HEX);
     Serial.print(", ");
     Serial.println(LOW32_TIMER(), HEX);
-    uint64_t t1 = READ_TIMER();
-    uint32_t low = READ_TIMER() % 0xFFFFFFFF;
-    uint32_t high = (READ_TIMER() >> 32) % 0xFFFFFFFF;
-    Serial.print(high, HEX);
-    Serial.print(", ");
-    Serial.println(low, HEX);
-    std::string value = pCharacteristic->getValue();
-
-    if (value.length() > 0) {
-      Serial.println("*********");
-      Serial.print("New value: ");
-      for (int i = 0; i < value.length(); i++) Serial.print(value[i]);
-
-      Serial.println();
-      Serial.println("*********");
-    }
-    TIMER_UPDATE();
-    uint64_t t2 = READ_TIMER();
+    t1 = READ_TIMER();
+    uint8_t *data = pCharacteristic->getData();
+    PRINT_UINT64(data);
   }
 };
 
@@ -74,6 +66,7 @@ class MyClientCallback : public BLEClientCallbacks {
 
   void onDisconnect(BLEClient *pclient) {
     connected = false;
+    setup();
     Serial.println("onDisconnect");
   }
 };
@@ -142,7 +135,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 
     // We have found a device, let us now see if it contains the service we are
     // looking for.
-    if (advertisedDevice.getName() == "ESP32 NTP Server") {
+    if (advertisedDevice.getName() == "ESP32 NTP Client") {
       pBLEScan->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
@@ -158,15 +151,6 @@ void setup() {
 
   // BLE initialization
   BLEDevice::init("ESP32 NTP Server");
-  BLEServer *pServer = BLEDevice::createServer();
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_WRITE);
-  pCharacteristic->setCallbacks(new MyCallbacks());
-  // starts the BLE communication
-  pService->start();
-  BLEAdvertising *pAdvertising = pServer->getAdvertising();
-  pAdvertising->start();
 
   // BLE scan/connect
   BLEDevice::init("");
@@ -178,10 +162,32 @@ void setup() {
   pBLEScan->setWindow(99);  // less or equal setInterval value
   pBLEScan->start(5, false);
   connectToServer();
+  t1 = 0;
+  pRemoteCharacteristic->writeValue("Server start");
+
+  Serial.println("Starting server");
+
+  // BLE Server initialization
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+      CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_WRITE);
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  read_char = pService->createCharacteristic(CHARACTERISTIC_UUID_2,
+                                             BLECharacteristic::PROPERTY_READ);
+  // starts the BLE communication
+  pService->start();
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising->start();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-  // BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-  delay(2000);
+  if (t1) {
+    TIMER_UPDATE();
+    uint64_t t2 = READ_TIMER();
+    pRemoteCharacteristic->writeValue((uint8_t *)&t1, 8);
+    t1 = 0;
+    read_char->setValue((uint8_t *)&t2, 8);
+  }
 }

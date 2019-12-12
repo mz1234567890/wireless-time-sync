@@ -15,6 +15,7 @@
 
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CHARACTERISTIC_UUID_2 "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 // General purpose timer info
 #define TIMER_CONFIG(value) *(uint32_t *)0x3FF5F000 = value
@@ -24,35 +25,29 @@
   (((uint64_t) * (uint32_t *)0x3FF5F008) << 32) + \
       (uint64_t) * (uint32_t *)0x3FF5F004
 #define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
+#define PRINT_UINT64(data)                                \
+  Serial.print((uint32_t)(*(uint64_t *)data << 32), HEX); \
+  Serial.print(", ");                                     \
+  Serial.println(*(uint32_t *)data, HEX)
 
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
-static BLERemoteCharacteristic *pRemoteCharacteristic;
+static BLERemoteCharacteristic *server_write_char;
+static BLERemoteCharacteristic *server_read_char;
 static BLEAdvertisedDevice *myDevice;
 BLEScan *pBLEScan;
+uint64_t t1;
+uint64_t t3;
 
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     TIMER_UPDATE();
-    Serial.print(HIGH32_TIMER(), HEX);
-    Serial.print(", ");
-    Serial.println(LOW32_TIMER(), HEX);
-    uint32_t low = READ_TIMER() % 0xFFFFFFFF;
-    uint32_t high = (READ_TIMER() >> 32) % 0xFFFFFFFF;
-    Serial.print(high, HEX);
-    Serial.print(", ");
-    Serial.println(low, HEX);
-    std::string value = pCharacteristic->getValue();
-
-    if (value.length() > 0) {
-      Serial.println("*********");
-      Serial.print("New value: ");
-      for (int i = 0; i < value.length(); i++) Serial.print(value[i]);
-
-      Serial.println();
-      Serial.println("*********");
-    }
+    t3 = READ_TIMER();
+    uint8_t *data = pCharacteristic->getData();
+    t1 = *(uint64_t *)data;
+    Serial.print("t3: ");
+    PRINT_UINT64(&t3);
   }
 };
 
@@ -71,6 +66,7 @@ class MyClientCallback : public BLEClientCallbacks {
 
   void onDisconnect(BLEClient *pclient) {
     connected = false;
+    setup();
     Serial.println("onDisconnect");
   }
 };
@@ -102,25 +98,15 @@ bool connectToServer() {
 
   // Obtain a reference to the characteristic in the service of the remote BLE
   // server.
-  pRemoteCharacteristic =
-      pRemoteService->getCharacteristic(CHARACTERISTIC_UUID);
-  if (pRemoteCharacteristic == nullptr) {
-    Serial.print("Failed to find our characteristic UUID: ");
-    Serial.println(CHARACTERISTIC_UUID);
+  server_write_char = pRemoteService->getCharacteristic(CHARACTERISTIC_UUID);
+  server_read_char = pRemoteService->getCharacteristic(CHARACTERISTIC_UUID_2);
+  if (server_write_char == nullptr || server_read_char == nullptr) {
+    Serial.print("Failed to find our characteristic UUID");
     pClient->disconnect();
     return false;
   }
   Serial.println(" - Found our characteristic");
 
-  // Read the value of the characteristic.
-  if (pRemoteCharacteristic->canRead()) {
-    std::string value = pRemoteCharacteristic->readValue();
-    Serial.print("The characteristic value was: ");
-    Serial.println(value.c_str());
-  }
-
-  if (pRemoteCharacteristic->canNotify())
-    pRemoteCharacteristic->registerForNotify(notifyCallback);
   connected = true;
   return true;
 }
@@ -163,7 +149,7 @@ void setup() {
   pService->start();
   BLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->start();
-
+  t1 = 0;
   // BLE scan/connect
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();  // create new scan
@@ -174,11 +160,28 @@ void setup() {
   pBLEScan->setWindow(99);  // less or equal setInterval value
   pBLEScan->start(5, false);
   connectToServer();
-  pRemoteCharacteristic->writeValue("test");
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  // BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-  delay(2000);
+  // make t0
+  TIMER_UPDATE();
+  uint64_t t0 = READ_TIMER();
+  Serial.print("t0: ");
+  PRINT_UINT64(&t0);
+  // write t0, set t1
+  t1 = 0;
+  server_write_char->writeValue((uint8_t *)&t0, 8);
+  // wait for t1 to return
+  while (t1 == 0) {
+    delay(10);
+  }
+  // print t1
+  Serial.print("t1: ");
+  PRINT_UINT64(&t1);
+  // get t2 from read_char
+  // uint8_t *t2 = server_read_char->readRawData();
+  // Serial.print("t2: ");
+  // PRINT_UINT64(t2);
+  t1 = 0;
+  delay(10000);
 }
