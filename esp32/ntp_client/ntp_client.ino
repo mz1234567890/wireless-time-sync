@@ -40,6 +40,22 @@ BLEScan *pBLEScan;
 uint64_t t1;
 uint64_t t3;
 
+uint64_t isr_time;
+
+const byte interruptPin = 5;
+volatile int interruptCounter = 0;
+int numberOfInterrupts = 0;
+
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR handleInterrupt() {
+  portENTER_CRITICAL_ISR(&mux);
+  TIMER_UPDATE();
+  isr_time = READ_TIMER();
+  interruptCounter++;
+  portEXIT_CRITICAL_ISR(&mux);
+}
+
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     TIMER_UPDATE();
@@ -136,6 +152,13 @@ void setup() {
   Serial.begin(115200);
   TIMER_CONFIG(0xD0000000);  // initialize the GPT
 
+  // ISR setup
+  Serial.println("Monitoring interrupts: ");
+  pinMode(interruptPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt,
+                  FALLING);
+  isr_time = 0;
+
   // BLE initialization
   BLEDevice::init("ESP32 NTP Client");
   BLEServer *pServer = BLEDevice::createServer();
@@ -193,5 +216,12 @@ void loop() {
   // PRINT_UINT64(&d);
   // Serial.print("offset: ");
   Serial.println((int32_t)o);
+  if (isr_time) {
+    portENTER_CRITICAL(&mux);
+    interruptCounter--;
+    portEXIT_CRITICAL(&mux);
+    Serial.print("ISR Time: ");
+    PRINT_UINT64(&isr_time);
+  }
   delay(1 * 1000);
 }
