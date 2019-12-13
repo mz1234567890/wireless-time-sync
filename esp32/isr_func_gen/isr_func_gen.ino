@@ -34,7 +34,7 @@ void setup() {
   TIMER_CONFIG(0xD0000000);  // initialize the GPT
   Serial.println("Monitoring interrupts: ");
   pinMode(interruptPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING);
 }
 
 void loop() {
