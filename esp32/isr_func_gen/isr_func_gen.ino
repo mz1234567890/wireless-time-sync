@@ -15,22 +15,38 @@
 
 #define GPIO_IN 5
 
-static void IRAM_ATTR gpio_isr_handler(void *arg) { Serial.println("here"); }
+const byte interruptPin = 5;
+volatile int interruptCounter = 0;
+int numberOfInterrupts = 0;
+ 
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+ 
+void IRAM_ATTR handleInterrupt() {
+  portENTER_CRITICAL_ISR(&mux);
+  TIMER_UPDATE();
+  interruptCounter++;
+  portEXIT_CRITICAL_ISR(&mux);
+}
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("test");
   TIMER_CONFIG(0xD0000000);  // initialize the GPT
-  gpio_config_t *config = new gpio_config_t;
-  config->pin_bit_mask = GPIO_NUM_5;  // gpio pin 5
-  config->pull_down_en = GPIO_PULLDOWN_DISABLE;
-  config->pull_up_en = GPIO_PULLUP_DISABLE;
-  config->mode = GPIO_MODE_INPUT;
-  config->intr_type = GPIO_INTR_POSEDGE;
-  gpio_config(config);
-  gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
-  gpio_isr_handler_add(GPIO_NUM_5, gpio_isr_handler, NULL);
+  Serial.println("Monitoring interrupts: ");
+  pinMode(interruptPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING);
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
+  if(interruptCounter>0){
+ 
+      portENTER_CRITICAL(&mux);
+      interruptCounter--;
+      portEXIT_CRITICAL(&mux);
+ 
+      numberOfInterrupts++;
+      uint64_t temp = READ_TIMER();
+      PRINT_UINT64(&temp);
+  }
 }
