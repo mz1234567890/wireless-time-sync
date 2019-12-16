@@ -30,9 +30,7 @@
   Serial.print(", ");                                     \
   Serial.println(*(uint32_t *)data, HEX)
 
-static boolean doConnect = false;
-static boolean connected = false;
-static boolean doScan = false;
+static boolean modify_offset = true;
 static BLERemoteCharacteristic *server_write_char;
 static BLERemoteCharacteristic *server_read_char;
 static BLEAdvertisedDevice *myDevice;
@@ -65,21 +63,10 @@ class MyCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic,
-                           uint8_t *pData, size_t length, bool isNotify) {
-  Serial.print("Notify callback for characteristic ");
-  Serial.print(pBLERemoteCharacteristic->getUUID().toString().c_str());
-  Serial.print(" of data length ");
-  Serial.println(length);
-  Serial.print("data: ");
-  Serial.println((char *)pData);
-}
-
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient *pclient) {}
 
   void onDisconnect(BLEClient *pclient) {
-    connected = false;
     setup();
     Serial.println("onDisconnect");
   }
@@ -120,8 +107,6 @@ bool connectToServer() {
     return false;
   }
   Serial.println(" - Found our characteristic");
-
-  connected = true;
   return true;
 }
 /**
@@ -141,9 +126,6 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     if (advertisedDevice.getName() == "ESP32 NTP Server") {
       pBLEScan->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
-      doConnect = true;
-      doScan = true;
-
     }  // Found our server
   }    // onResult
 };     // MyAdvertisedDeviceCallbacks
@@ -184,6 +166,31 @@ void setup() {
 }
 
 void loop() {
+  delay(100);
+  uint64_t o = calculate_offset();
+  TIMER_UPDATE();
+  if (modify_offset) {
+    *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
+    *((uint32_t *)0x3FF5F020) = 1;
+  }
+  if (o == 0) {
+    modify_offset = false;
+  }
+
+  Serial.print("offset: ");
+  Serial.println((int32_t)o);
+
+  if (isr_time) {
+    portENTER_CRITICAL(&mux);
+    interruptCounter--;
+    portEXIT_CRITICAL(&mux);
+    Serial.print("ISR Time: ");
+    PRINT_UINT64(&isr_time);
+  }
+  delay(1 * 1000 - 100);
+}
+
+uint64_t calculate_offset() {
   // make t0
   TIMER_UPDATE();
   uint64_t t0 = READ_TIMER();
@@ -200,28 +207,5 @@ void loop() {
   uint64_t t2 = *(uint64_t *)temp.c_str();
   uint64_t d = ((t1 - t0) + (t3 - t2)) / 2;
   uint64_t o = ((t1 - t0) - (t3 - t2)) / 2;
-  TIMER_UPDATE();
-  *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
-  *((uint32_t *)0x3FF5F020) = 1;
-  // Serial.print("t0: ");
-  // PRINT_UINT64(&t0);
-  // Serial.print("t1: ");
-  // PRINT_UINT64(&t1);
-  // Serial.print("t2: ");
-  // PRINT_UINT64(&t2);
-  // Serial.print("t3: ");
-  // PRINT_UINT64(&t3);
-
-  // Serial.print("delay: ");
-  // PRINT_UINT64(&d);
-  // Serial.print("offset: ");
-  Serial.println((int32_t)o);
-  if (isr_time) {
-    portENTER_CRITICAL(&mux);
-    interruptCounter--;
-    portEXIT_CRITICAL(&mux);
-    Serial.print("ISR Time: ");
-    PRINT_UINT64(&isr_time);
-  }
-  delay(1 * 1000);
+  return o;
 }
