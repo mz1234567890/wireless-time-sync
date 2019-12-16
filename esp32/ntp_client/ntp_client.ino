@@ -51,6 +51,8 @@ void IRAM_ATTR handleInterrupt() {
   TIMER_UPDATE();
   isr_time = READ_TIMER();
   interruptCounter++;
+  Serial.print("ISR Time: ");
+  PRINT_UINT64(&isr_time);
   portEXIT_CRITICAL_ISR(&mux);
 }
 
@@ -137,8 +139,7 @@ void setup() {
   // ISR setup
   Serial.println("Monitoring interrupts: ");
   pinMode(interruptPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt,
-                  FALLING);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING);
   isr_time = 0;
 
   // BLE initialization
