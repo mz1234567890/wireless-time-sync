@@ -41,18 +41,15 @@ uint64_t t3;
 uint64_t isr_time;
 
 const byte interruptPin = 5;
-volatile int interruptCounter = 0;
-int numberOfInterrupts = 0;
+int ledPin = 5;
 
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+void (*resetFunc)(void) = 0;  // declare reset function @ address 0
 
 void IRAM_ATTR handleInterrupt() {
   portENTER_CRITICAL_ISR(&mux);
   TIMER_UPDATE();
   isr_time = READ_TIMER();
-  interruptCounter++;
-  Serial.print("ISR Time: ");
-  PRINT_UINT64(&isr_time);
   portEXIT_CRITICAL_ISR(&mux);
 }
 
@@ -66,20 +63,19 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 };
 
 class MyClientCallback : public BLEClientCallbacks {
-  void onConnect(BLEClient *pclient) {}
-
-  void onDisconnect(BLEClient *pclient) {
-    setup();
-    Serial.println("onDisconnect");
+  void onConnect(BLEClient *pclient) {
+    Serial.println("   Connected to the server");
   }
+
+  void onDisconnect(BLEClient *pclient) { resetFunc(); }
 };
 
 bool connectToServer() {
-  Serial.print("Forming a connection to ");
+  Serial.print("   Forming a connection to ");
   Serial.println(myDevice->getAddress().toString().c_str());
 
   BLEClient *pClient = BLEDevice::createClient();
-  Serial.println(" - Created client");
+  Serial.println("    - Created client");
 
   pClient->setClientCallbacks(new MyClientCallback());
 
@@ -87,7 +83,7 @@ bool connectToServer() {
   pClient->connect(myDevice);  // if you pass BLEAdvertisedDevice instead of
                                // address, it will be recognized type of peer
                                // device address (public or private)
-  Serial.println(" - Connected to server");
+  Serial.println("    - Connected to server");
 
   // Obtain a reference to the service we are after in the remote BLE server.
   BLERemoteService *pRemoteService = pClient->getService(SERVICE_UUID);
@@ -97,7 +93,7 @@ bool connectToServer() {
     pClient->disconnect();
     return false;
   }
-  Serial.println(" - Found our service");
+  Serial.println("    - Found our service");
 
   // Obtain a reference to the characteristic in the service of the remote BLE
   // server.
@@ -108,24 +104,17 @@ bool connectToServer() {
     pClient->disconnect();
     return false;
   }
-  Serial.println(" - Found our characteristic");
+  Serial.println("    - Found our characteristic");
   return true;
 }
-/**
- * Scan for BLE servers and find the first one that advertises the service we
- * are looking for.
- */
+
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   /**
    * Called for each advertising BLE server.
    */
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    Serial.print("BLE Advertised Device found: ");
-    Serial.println(advertisedDevice.toString().c_str());
-
-    // We have found a device, let us now see if it contains the service we are
-    // looking for.
     if (advertisedDevice.getName() == "ESP32 NTP Server") {
+      Serial.println("    - Found our server");
       pBLEScan->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
     }  // Found our server
@@ -144,6 +133,10 @@ void setup() {
 
   // BLE initialization
   BLEDevice::init("ESP32 NTP Client");
+  t1 = 0;
+
+  Serial.println("BLE Server");
+  Serial.println("    - Starting server");
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(SERVICE_UUID);
   BLECharacteristic *pCharacteristic = pService->createCharacteristic(
@@ -153,9 +146,15 @@ void setup() {
   pService->start();
   BLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->start();
-  t1 = 0;
+  Serial.println("    - Started server");
+  while (t1 == 0) {
+    delay(10);
+  }
+  Serial.println("    - Server connected");
+  delay(100);
+  Serial.println("BLE Client");
+  Serial.println("    - Beginning scan for server");
   // BLE scan/connect
-  BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();  // create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setActiveScan(
@@ -164,31 +163,29 @@ void setup() {
   pBLEScan->setWindow(99);  // less or equal setInterval value
   pBLEScan->start(5, false);
   connectToServer();
+  Serial.println("Starting PTP");
+  while (modify_offset) {
+    uint64_t o = calculate_offset();
+    TIMER_UPDATE();
+    if (modify_offset) {
+      *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
+      *((uint32_t *)0x3FF5F020) = 1;
+    }
+    if (o == 0) {
+      modify_offset = false;
+    }
+
+    Serial.print("offset: ");
+    Serial.println((int32_t)o);
+    delay(1000);
+  }
 }
 
 void loop() {
-  delay(100);
-  uint64_t o = calculate_offset();
-  TIMER_UPDATE();
-  if (modify_offset) {
-    *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
-    *((uint32_t *)0x3FF5F020) = 1;
-  }
-  if (o == 0) {
-    modify_offset = false;
-  }
-
-  Serial.print("offset: ");
-  Serial.println((int32_t)o);
-
   if (isr_time) {
-    portENTER_CRITICAL(&mux);
-    interruptCounter--;
-    portEXIT_CRITICAL(&mux);
     Serial.print("ISR Time: ");
     PRINT_UINT64(&isr_time);
   }
-  delay(1 * 1000 - 100);
 }
 
 uint64_t calculate_offset() {
