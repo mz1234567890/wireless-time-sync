@@ -9,6 +9,7 @@
 #include <BLEScan.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <esp32-hal-timer.h>
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -18,12 +19,6 @@
 #define CHARACTERISTIC_UUID_2 "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 // General purpose timer info
-#define TIMER_CONFIG(value) *(uint32_t *)0x3FF5F000 = value
-#define LOW32_TIMER() *(uint32_t *)0x3FF5F004
-#define HIGH32_TIMER() *(uint32_t *)0x3FF5F008
-#define READ_TIMER()                              \
-  (((uint64_t) * (uint32_t *)0x3FF5F008) << 32) + \
-      (uint64_t) * (uint32_t *)0x3FF5F004
 #define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
 #define PRINT_UINT64(data)                                \
   Serial.print((uint32_t)(*(uint64_t *)data >> 32), HEX); \
@@ -34,27 +29,44 @@ static BLERemoteCharacteristic *pRemoteCharacteristic;
 BLECharacteristic *read_char;
 static BLEAdvertisedDevice *myDevice;
 BLEScan *pBLEScan;
-uint64_t t1;
+volatile uint64_t t1;
+volatile bool timestamp_requested;
 
 uint64_t isr_time;
 
 const byte interruptPin = 5;
+int ledPin = 5;
 
+volatile int interruptCounter;
+int totalInterruptCounter;
+
+int state = 0;
+
+hw_timer_t *timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 void (*resetFunc)(void) = 0;  // declare reset function @ address 0
 
+void IRAM_ATTR onTimer() {
+  portENTER_CRITICAL_ISR(&timerMux);
+  interruptCounter++;
+  portEXIT_CRITICAL_ISR(&timerMux);
+}
+
 void IRAM_ATTR handleInterrupt() {
   portENTER_CRITICAL_ISR(&mux);
-  TIMER_UPDATE();
-  isr_time = READ_TIMER();
+  // TIMER_UPDATE();
+  // isr_time = READ_TIMER();
+  isr_time = timerRead(timer);
   portEXIT_CRITICAL_ISR(&mux);
 }
 
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     TIMER_UPDATE();
-    t1 = READ_TIMER();
+    t1 = timerRead(timer);
     uint8_t *data = pCharacteristic->getData();
+    timestamp_requested = true;
   }
 };
 
@@ -89,7 +101,7 @@ bool connectToServer() {
     pClient->disconnect();
     return false;
   }
-  Serial.println(" - Found our service");
+  Serial.println("    - Found our service");
 
   // Obtain a reference to the characteristic in the service of the remote BLE
   // server.
@@ -114,19 +126,26 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       Serial.println("    - Found our server");
       pBLEScan->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
-    }  // Found our server
-  }    // onResult
-};     // MyAdvertisedDeviceCallbacks
+    }
+  }  // onResult
+};   // MyAdvertisedDeviceCallbacks
 
 void setup() {
+  timestamp_requested = false;
+  pinMode(ledPin, OUTPUT);
   Serial.begin(115200);
-  TIMER_CONFIG(0xD0000000);  // initialize the GPT
 
+  // timer initialization
+  timer = timerBegin(0, 0x4000, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  Serial.println(*(uint32_t *)0x3FF5F000, HEX);
+
+  digitalWrite(ledPin, LOW);
   // ISR setup
-  Serial.println("Monitoring interrupts: ");
-  pinMode(interruptPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt,
-                  RISING);
+  // Serial.println("\nMonitoring interrupts\n");
+  // pinMode(interruptPin, INPUT_PULLUP);
+  // attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt,
+  // RISING);
   isr_time = 0;
 
   // BLE initialization
@@ -142,8 +161,13 @@ void setup() {
   pBLEScan->setWindow(99);  // less or equal setInterval value
   pBLEScan->start(5, false);
   connectToServer();
-  pRemoteCharacteristic->writeValue(2);
+  // uint64_t temp = 2;
+  // pRemoteCharacteristic->writeValue((uint8_t *)&temp, 8);
   t1 = 0;
+  delay(250);
+  digitalWrite(ledPin, HIGH);
+  delay(250);
+  digitalWrite(ledPin, LOW);
   Serial.println("BLE Server");
   Serial.println("    - Starting server");
 
@@ -160,20 +184,35 @@ void setup() {
   BLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->start();
   Serial.println("    - Started server");
+  delay(250);
+  digitalWrite(ledPin, HIGH);
+  delay(250);
+  digitalWrite(ledPin, LOW);
+
+  timerAlarmWrite(timer, 0xD000, true);
+  timerAlarmEnable(timer);
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-  if (t1) {
-    TIMER_UPDATE();
-    uint64_t t2 = READ_TIMER();
-    // PRINT_UINT64(&t2);
+  if (timestamp_requested) {
+    uint64_t t2 = timerRead(timer);
     read_char->setValue((uint8_t *)&t2, 8);
     pRemoteCharacteristic->writeValue((uint8_t *)&t1, 8);
-    t1 = 0;
+    timestamp_requested = false;
   }
   if (isr_time) {
     Serial.print("ISR Time: ");
     PRINT_UINT64(&isr_time);
+    isr_time = 0;
+  }
+  if (interruptCounter > 0) {
+    portENTER_CRITICAL(&timerMux);
+    interruptCounter--;
+    portEXIT_CRITICAL(&timerMux);
+    digitalWrite(ledPin, (state) ? HIGH : LOW);
+    state = !state;
+    timerAlarmWrite(timer, 0x500, true);
+    timerAlarmEnable(timer);
   }
 }

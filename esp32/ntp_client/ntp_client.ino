@@ -9,6 +9,8 @@
 #include <BLEScan.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <esp32-hal-timer.h>
+#include <string.h>
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -17,48 +19,50 @@
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHARACTERISTIC_UUID_2 "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
-// General purpose timer info
-#define TIMER_CONFIG(value) *(uint32_t *)0x3FF5F000 = value
-#define LOW32_TIMER() *(uint32_t *)0x3FF5F004
-#define HIGH32_TIMER() *(uint32_t *)0x3FF5F008
-#define READ_TIMER()                              \
-  (((uint64_t) * (uint32_t *)0x3FF5F008) << 32) + \
-      (uint64_t) * (uint32_t *)0x3FF5F004
-#define TIMER_UPDATE() *(uint32_t *)0x3FF5F00C = 1
-#define PRINT_UINT64(data)                                \
-  Serial.print((uint32_t)(*(uint64_t *)data >> 32), HEX); \
-  Serial.print(", ");                                     \
-  Serial.println(*(uint32_t *)data, HEX)
-
 static boolean modify_offset = true;
 static BLERemoteCharacteristic *server_write_char;
 static BLERemoteCharacteristic *server_read_char;
 static BLEAdvertisedDevice *myDevice;
+BLECharacteristic *pCharacteristic;
 BLEScan *pBLEScan;
-uint64_t t1;
-uint64_t t3;
-
+static volatile uint64_t t1;
+static volatile uint64_t t3;
 uint64_t isr_time;
+uint64_t alarm_num;
+static volatile bool timestamp_received;
 
 const byte interruptPin = 5;
 int ledPin = 5;
 
+volatile int interruptCounter;
+int totalInterruptCounter;
+
+int state = 0;
+
+hw_timer_t *timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 void (*resetFunc)(void) = 0;  // declare reset function @ address 0
 
+void IRAM_ATTR onTimer() {
+  portENTER_CRITICAL_ISR(&timerMux);
+  interruptCounter++;
+  portEXIT_CRITICAL_ISR(&timerMux);
+}
+
 void IRAM_ATTR handleInterrupt() {
   portENTER_CRITICAL_ISR(&mux);
-  TIMER_UPDATE();
-  isr_time = READ_TIMER();
+  isr_time = timerRead(timer);
   portEXIT_CRITICAL_ISR(&mux);
 }
 
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
-    TIMER_UPDATE();
-    t3 = READ_TIMER();
-    uint8_t *data = pCharacteristic->getData();
+    t3 = timerRead(timer);
+    // TODO: t1 loses correct value somehow
+    const char *data = pCharacteristic->getValue().c_str();
     t1 = *(uint64_t *)data;
+    timestamp_received = true;
   }
 };
 
@@ -122,13 +126,21 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 };     // MyAdvertisedDeviceCallbacks
 
 void setup() {
+  timestamp_received = false;
+  pinMode(ledPin, OUTPUT);
   Serial.begin(115200);
-  TIMER_CONFIG(0xD0000000);  // initialize the GPT
 
+  // timer initialization
+  timer = timerBegin(0, 0x4000, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  Serial.println(*(uint32_t *)0x3FF5F000, HEX);
+
+  digitalWrite(ledPin, LOW);
   // ISR setup
-  Serial.println("Monitoring interrupts: ");
-  pinMode(interruptPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING);
+  // Serial.println("\nMonitoring interrupts\n");
+  // pinMode(interruptPin, INPUT_PULLUP);
+  // attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt,
+  // RISING);
   isr_time = 0;
 
   // BLE initialization
@@ -139,7 +151,7 @@ void setup() {
   Serial.println("    - Starting server");
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(SERVICE_UUID);
-  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+  pCharacteristic = pService->createCharacteristic(
       CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_WRITE);
   pCharacteristic->setCallbacks(new MyCallbacks());
   // starts the BLE communication
@@ -147,9 +159,13 @@ void setup() {
   BLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->start();
   Serial.println("    - Started server");
-  while (t1 == 0) {
-    delay(10);
-  }
+  delay(250);
+  digitalWrite(ledPin, HIGH);
+  delay(250);
+  digitalWrite(ledPin, LOW);
+  // while (t1 == 0) {
+  //   delay(10);
+  // }
   Serial.println("    - Server connected");
   delay(100);
   Serial.println("BLE Client");
@@ -163,47 +179,101 @@ void setup() {
   pBLEScan->setWindow(99);  // less or equal setInterval value
   pBLEScan->start(5, false);
   connectToServer();
+  delay(250);
+  digitalWrite(ledPin, HIGH);
+  delay(125);
+  digitalWrite(ledPin, LOW);
+  delay(250);
+  digitalWrite(ledPin, HIGH);
+  delay(125);
+  digitalWrite(ledPin, LOW);
   Serial.println("Starting PTP");
+  timerWrite(timer, 0);
   while (modify_offset) {
     uint64_t o = calculate_offset();
-    TIMER_UPDATE();
     if (modify_offset) {
-      *((uint32_t *)0x3FF5F018) = LOW32_TIMER() + o;
-      *((uint32_t *)0x3FF5F020) = 1;
+      uint64_t temp = timerRead(timer);
+      *(uint32_t *)0x3FF5F018 = (uint32_t)temp + (uint32_t)o;
+      *(uint32_t *)0x3FF5F014 = (uint32_t)(temp >> 32) + (uint32_t)(o >> 32);
+      *(uint32_t *)0x3FF5F020 = 1;
     }
-    if (o == 0) {
+    if (o < 75) {
       modify_offset = false;
     }
 
-    Serial.print("offset: ");
-    Serial.println((int32_t)o);
-    delay(1000);
+    // Serial.print("offset: ");
+    // Serial.println((int32_t)o);
+    delay(5);
   }
+  digitalWrite(ledPin, LOW);
+  *(uint32_t *)0x3FF5F018 = (uint32_t)0;
+  *(uint32_t *)0x3FF5F014 = (uint32_t)(0 >> 32);
+  timerAlarmWrite(timer, 0xD000, true);
+  timerAlarmEnable(timer);
 }
 
 void loop() {
   if (isr_time) {
     Serial.print("ISR Time: ");
-    PRINT_UINT64(&isr_time);
+  }
+
+  if (interruptCounter > 0) {
+    portENTER_CRITICAL(&timerMux);
+    interruptCounter--;
+    portEXIT_CRITICAL(&timerMux);
+    digitalWrite(ledPin, (state) ? HIGH : LOW);
+    state = !state;
+    timerAlarmWrite(timer, 0x500, true);
+    timerAlarmEnable(timer);
   }
 }
 
 uint64_t calculate_offset() {
   // make t0
-  TIMER_UPDATE();
-  uint64_t t0 = READ_TIMER();
+  uint64_t t0 = timerRead(timer);
   // write t0, set t1
-  t1 = 0;
   server_write_char->writeValue((uint8_t *)&t0, 8);
+
+  // Serial.print("t0: ");
+  // Serial.print((uint32_t)(t0 >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)t0, HEX);
+
   // wait for t1 to return
-  while (t1 == 0) {
+  while (!timestamp_received) {
     delay(10);
   }
+  timestamp_received = false;
+
+  // Serial.print("t1: ");
+  // Serial.print((uint32_t)(t1 >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)t1, HEX);
 
   // get t2 from read_char
   std::string temp = server_read_char->readValue();
   uint64_t t2 = *(uint64_t *)temp.c_str();
+
+  // Serial.print("t2: ");
+  // Serial.print((uint32_t)(t2 >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)t2, HEX);
+
   uint64_t d = ((t1 - t0) + (t3 - t2)) / 2;
   uint64_t o = ((t1 - t0) - (t3 - t2)) / 2;
+
+  // Serial.print("t3: ");
+  // Serial.print((uint32_t)(t1 >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)t3, HEX);
+
+  // Serial.print("o: ");
+  // Serial.print((uint32_t)(o >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)o, HEX);
+  // Serial.print("d: ");
+  // Serial.print((uint32_t)(d >> 32), HEX);
+  // Serial.print(", ");
+  // Serial.println((uint32_t)d, HEX);
   return o;
 }
